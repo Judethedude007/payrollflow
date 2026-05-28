@@ -39,7 +39,7 @@ export function sanitizeNumber(value: unknown): number {
 }
 
 /**
- * Format a number as Indian Rupee currency
+ * Format a number as Indian Rupee currency (for web UI — uses ₹ symbol)
  */
 export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-IN', {
@@ -48,6 +48,19 @@ export function formatCurrency(amount: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+/**
+ * Format a number as Indian Rupee currency for PDF (uses "Rs." instead of ₹)
+ * Standard PDF fonts (Helvetica, Times) only support WinAnsi encoding
+ * and cannot render the ₹ symbol (U+20B9).
+ */
+export function formatCurrencyForPdf(amount: number): string {
+  const formatted = new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+  return `Rs. ${formatted}`;
 }
 
 /**

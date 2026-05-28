@@ -32,6 +32,7 @@ export async function POST(request: Request) {
               email: row.email,
               designation: row.designation || '',
               department: row.department || '',
+              date_of_birth: row.date_of_birth || null,
             },
             { onConflict: 'employee_id' }
           );

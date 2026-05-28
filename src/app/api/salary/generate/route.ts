@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { generateSalarySlipPdf } from '@/lib/pdf';
-import { calculateNetSalary } from '@/utils/salary';
 import type { Employee, SalaryRecord } from '@/types';
 
 export async function POST(request: Request) {

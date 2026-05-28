@@ -84,7 +84,7 @@ export async function sendSalarySlipEmail(
     await transporter.sendMail({
       from: `"PayrollFlow" <${process.env.EMAIL_USER}>`,
       to: options.to,
-      subject: `Salary Slip — ${options.month} ${options.year}`,
+      subject: `Salary Slip - ${options.month} ${options.year}`,
       html: htmlBody,
       attachments: [
         {
