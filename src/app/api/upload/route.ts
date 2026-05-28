@@ -58,6 +58,14 @@ export async function POST(request: Request) {
           row.allowances
         );
 
+        // Delete existing salary record for same period (prevent duplicates)
+        await supabase
+          .from('salary_records')
+          .delete()
+          .eq('employee_id', row.employee_id)
+          .eq('month', String(row.month))
+          .eq('year', String(row.year));
+
         // Insert salary record
         const { error: salaryError } = await supabase
           .from('salary_records')
@@ -67,8 +75,8 @@ export async function POST(request: Request) {
             hra: row.hra || 0,
             allowances: row.allowances || 0,
             deductions: row.deductions || 0,
-            month: row.month,
-            year: row.year,
+            month: String(row.month),
+            year: String(row.year),
             net_salary: netSalary,
           });
 

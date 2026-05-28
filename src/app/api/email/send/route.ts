@@ -13,6 +13,8 @@ export async function POST(request: Request) {
       year: string;
     };
 
+    console.log('[Email Send] Request:', { employeeIds: employeeIds?.length, month, year });
+
     if (!employeeIds?.length || !month || !year) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
@@ -23,48 +25,45 @@ export async function POST(request: Request) {
     const results = {
       sent: 0,
       failed: 0,
-      details: [] as { employee_id: string; status: string; error?: string }[],
+      details: [] as { employee_id: string; name?: string; status: string; error?: string }[],
     };
 
     for (const empId of employeeIds) {
       try {
         // Fetch employee
-        const { data: employee } = await supabase
+        const { data: employee, error: empError } = await supabase
           .from('employees')
           .select('*')
           .eq('employee_id', empId)
           .single();
 
-        if (!employee) {
+        if (empError || !employee) {
+          const msg = empError?.message || 'Employee not found';
+          console.error(`[Email Send] Employee ${empId}: ${msg}`);
           results.failed++;
-          results.details.push({
-            employee_id: empId,
-            status: 'failed',
-            error: 'Employee not found',
-          });
+          results.details.push({ employee_id: empId, status: 'failed', error: msg });
           continue;
         }
 
         // Fetch salary record
-        const { data: salaryRecord } = await supabase
+        const { data: salaryRecord, error: salaryError } = await supabase
           .from('salary_records')
           .select('*')
           .eq('employee_id', empId)
-          .eq('month', month)
-          .eq('year', year)
+          .eq('month', String(month))
+          .eq('year', String(year))
           .single();
 
-        if (!salaryRecord) {
+        if (salaryError || !salaryRecord) {
+          const msg = salaryError?.message || 'No salary record for this period';
+          console.error(`[Email Send] Salary ${empId}: ${msg}`);
           results.failed++;
-          results.details.push({
-            employee_id: empId,
-            status: 'failed',
-            error: 'No salary record found for this period',
-          });
+          results.details.push({ employee_id: empId, name: employee.name, status: 'failed', error: msg });
           continue;
         }
 
         // Generate PDF
+        console.log(`[Email Send] Generating PDF for ${employee.name}...`);
         const pdfBytes = await generateSalarySlipPdf({
           employee: employee as Employee,
           salaryRecord: salaryRecord as SalaryRecord,
@@ -73,6 +72,7 @@ export async function POST(request: Request) {
 
         // Send email
         const monthName = getMonthName(month);
+        console.log(`[Email Send] Sending to ${employee.email}...`);
         const emailResult = await sendSalarySlipEmail({
           to: employee.email,
           employeeName: employee.name,
@@ -92,32 +92,33 @@ export async function POST(request: Request) {
 
         if (emailResult.success) {
           results.sent++;
-          results.details.push({ employee_id: empId, status: 'sent' });
+          results.details.push({ employee_id: empId, name: employee.name, status: 'sent' });
+          console.log(`[Email Send] Sent to ${employee.email}`);
         } else {
           results.failed++;
-          results.details.push({
-            employee_id: empId,
-            status: 'failed',
-            error: emailResult.error,
-          });
+          results.details.push({ employee_id: empId, name: employee.name, status: 'failed', error: emailResult.error });
+          console.error(`[Email Send] Failed for ${employee.email}: ${emailResult.error}`);
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        console.error(`[Email Send] Error for ${empId}: ${msg}`);
         results.failed++;
-        results.details.push({
-          employee_id: empId,
-          status: 'failed',
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
+        results.details.push({ employee_id: empId, status: 'failed', error: msg });
 
-        // Log failure
-        await supabase.from('email_logs').insert({
-          employee_id: empId,
-          status: 'failed',
-          error_message: err instanceof Error ? err.message : 'Unknown error',
-          sent_at: new Date().toISOString(),
-        });
+        try {
+          await supabase.from('email_logs').insert({
+            employee_id: empId,
+            status: 'failed',
+            error_message: msg,
+            sent_at: new Date().toISOString(),
+          });
+        } catch {
+          // Ignore logging errors
+        }
       }
     }
+
+    console.log(`[Email Send] Done: ${results.sent} sent, ${results.failed} failed`);
 
     return NextResponse.json({
       success: true,
@@ -125,12 +126,10 @@ export async function POST(request: Request) {
       message: `Sent ${results.sent} emails, ${results.failed} failed`,
     });
   } catch (error) {
-    console.error('Email send API error:', error);
+    const msg = error instanceof Error ? error.message : 'Internal server error';
+    console.error('[Email Send] Fatal error:', msg);
     return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      },
+      { success: false, error: msg },
       { status: 500 }
     );
   }

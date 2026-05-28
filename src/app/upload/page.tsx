@@ -169,8 +169,9 @@ export default function UploadPage() {
         });
       } else {
         toast.error('Failed to generate PDFs', {
-          description: data.error || 'No PDFs were generated.',
+          description: data.message || data.error || 'No PDFs were generated.',
         });
+        console.error('PDF Generate response:', data);
       }
     } catch (error) {
       toast.error('Generation failed', {

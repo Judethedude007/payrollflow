@@ -166,7 +166,7 @@ export default function RecordsPage() {
             </TableHeader>
             <TableBody>
               {filteredRecords.map((record) => (
-                <TableRow key={`${record.employee_id}-${record.month}-${record.year}`} className="hover:bg-muted/30 transition-colors">
+                <TableRow key={record.id} className="hover:bg-muted/30 transition-colors">
                   <TableCell>
                     <div>
                       <p className="font-medium text-sm">

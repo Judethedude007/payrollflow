@@ -5,12 +5,23 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import type { Employee, SalaryRecord } from '@/types';
 import { formatCurrencyForPdf, getMonthName } from '@/utils/salary';
+import * as fs from 'fs';
+import * as path from 'path';
+import QRCode from 'qrcode';
 
 interface GeneratePdfParams {
   employee: Employee;
   salaryRecord: SalaryRecord;
   companyName?: string;
   withPassword?: boolean;
+}
+
+/**
+ * Safely encode a string for WinAnsi (strip non-encodable chars)
+ */
+function safeText(text: string): string {
+  if (!text) return 'N/A';
+  return String(text).replace(/[^\x20-\x7E]/g, '');
 }
 
 /**
@@ -45,11 +56,25 @@ export async function generateSalarySlipPdf({
   let y = height - margin;
 
   // ============================================================
-  // HEADER - Company banner with gradient effect
+  // EMBED LOGO
   // ============================================================
-  const headerHeight = 85;
+  let logoImage: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null;
+  try {
+    const logoPath = path.join(process.cwd(), 'public', 'logo.png');
+    if (fs.existsSync(logoPath)) {
+      const logoBytes = fs.readFileSync(logoPath);
+      logoImage = await pdfDoc.embedPng(logoBytes);
+    }
+  } catch (e) {
+    console.warn('Could not embed logo:', e);
+  }
 
-  // Dark blue bottom layer
+  // ============================================================
+  // HEADER - Company banner
+  // ============================================================
+  const headerHeight = 80;
+
+  // Dark blue base
   page.drawRectangle({
     x: 0,
     y: y - headerHeight + 30,
@@ -58,66 +83,80 @@ export async function generateSalarySlipPdf({
     color: darkBlue,
   });
 
-  // Lighter blue overlay for gradient feel
+  // Lighter overlay for gradient feel
   page.drawRectangle({
     x: 0,
-    y: y - headerHeight + 30 + 20,
+    y: y - headerHeight + 50,
     width: width,
     height: headerHeight - 20,
     color: headerBgColor,
   });
 
+  // Logo (if available)
+  let textStartX = margin;
+  if (logoImage) {
+    const logoScale = 36 / logoImage.height;
+    const logoW = logoImage.width * logoScale;
+    const logoH = 36;
+    page.drawImage(logoImage, {
+      x: margin,
+      y: y - 30,
+      width: logoW,
+      height: logoH,
+    });
+    textStartX = margin + logoW + 10;
+  }
+
   // Company name
-  page.drawText(companyName.toUpperCase(), {
-    x: margin,
+  page.drawText(safeText(companyName.toUpperCase()), {
+    x: textStartX,
     y: y - 12,
-    size: 26,
+    size: 22,
     font: fontBold,
     color: white,
   });
 
-  // Tagline
+  // Subtitle
   page.drawText('SALARY SLIP', {
-    x: margin,
-    y: y - 36,
-    size: 11,
+    x: textStartX,
+    y: y - 32,
+    size: 10,
     font: fontRegular,
     color: rgb(0.8, 0.85, 1),
   });
 
   // Month/Year on right side
-  const monthYear = `${getMonthName(salaryRecord.month)} ${salaryRecord.year}`;
+  const monthName = getMonthName(salaryRecord.month);
+  const monthYear = `${monthName} ${salaryRecord.year}`;
   const monthYearWidth = fontBold.widthOfTextAtSize(monthYear, 14);
   page.drawText(monthYear, {
     x: width - margin - monthYearWidth,
-    y: y - 18,
+    y: y - 15,
     size: 14,
     font: fontBold,
     color: white,
   });
 
-  // Payment Date
-  const payDate = `Payment Date: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}`;
-  const payDateWidth = fontRegular.widthOfTextAtSize(payDate, 9);
-  page.drawText(payDate, {
-    x: width - margin - payDateWidth,
-    y: y - 36,
-    size: 9,
+  // Generated Date (uses the salary month, not today)
+  const generatedDate = `Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+  const genDateWidth = fontRegular.widthOfTextAtSize(generatedDate, 8);
+  page.drawText(generatedDate, {
+    x: width - margin - genDateWidth,
+    y: y - 32,
+    size: 8,
     font: fontRegular,
     color: rgb(0.8, 0.85, 1),
   });
 
-  y -= headerHeight + 30;
+  y -= headerHeight + 25;
 
   // ============================================================
-  // EMPLOYEE DETAILS SECTION - Card style
+  // EMPLOYEE DETAILS - Card style
   // ============================================================
-
-  // Section background
-  const detailsBoxHeight = 90;
+  const detailsBoxHeight = 82;
   page.drawRectangle({
     x: margin,
-    y: y - detailsBoxHeight + 10,
+    y: y - detailsBoxHeight + 12,
     width: width - 2 * margin,
     height: detailsBoxHeight,
     color: lightBgColor,
@@ -125,22 +164,20 @@ export async function generateSalarySlipPdf({
     borderWidth: 0.5,
   });
 
-  // Section title
   page.drawText('EMPLOYEE DETAILS', {
     x: margin + 15,
     y: y,
-    size: 10,
+    size: 9,
     font: fontBold,
     color: primaryColor,
   });
 
-  y -= 22;
+  y -= 20;
 
-  // Employee details - two column layout
   const col1X = margin + 15;
   const col2X = width / 2 + 20;
-  const labelOffset = 105;
-  const detailsLineHeight = 20;
+  const labelOffset = 100;
+  const detailsLineHeight = 18;
 
   const drawDetail = (label: string, value: string, x: number, currentY: number) => {
     page.drawText(label, {
@@ -150,9 +187,7 @@ export async function generateSalarySlipPdf({
       font: fontRegular,
       color: mutedColor,
     });
-    // Safely encode value for PDF (strip non-WinAnsi characters)
-    const safeValue = (value || 'N/A').replace(/[^\x20-\x7E]/g, '');
-    page.drawText(safeValue, {
+    page.drawText(safeText(value), {
       x: x + labelOffset,
       y: currentY,
       size: 9,
@@ -172,33 +207,31 @@ export async function generateSalarySlipPdf({
   drawDetail('Email', employee.email, col1X, y);
   drawDetail('Pay Period', monthYear, col2X, y);
 
-  y -= 40;
+  y -= 35;
 
   // ============================================================
-  // EARNINGS & DEDUCTIONS TABLE
+  // SALARY BREAKDOWN TABLE
   // ============================================================
   page.drawText('SALARY BREAKDOWN', {
     x: margin,
     y,
-    size: 10,
+    size: 9,
     font: fontBold,
     color: primaryColor,
   });
 
-  y -= 6;
+  y -= 5;
   page.drawLine({
     start: { x: margin, y },
     end: { x: width - margin, y },
     thickness: 1.5,
     color: primaryColor,
   });
+  y -= 2;
 
-  y -= 3;
-
-  // Table
   const tableX = margin;
   const tableWidth = width - 2 * margin;
-  const rowHeight = 32;
+  const rowHeight = 30;
 
   // Table header
   page.drawRectangle({
@@ -211,7 +244,7 @@ export async function generateSalarySlipPdf({
 
   page.drawText('Component', {
     x: tableX + 15,
-    y: y - 20,
+    y: y - 19,
     size: 9,
     font: fontBold,
     color: white,
@@ -221,7 +254,7 @@ export async function generateSalarySlipPdf({
   const amountLabelWidth = fontBold.widthOfTextAtSize(amountLabel, 9);
   page.drawText(amountLabel, {
     x: tableX + tableWidth - amountLabelWidth - 15,
-    y: y - 20,
+    y: y - 19,
     size: 9,
     font: fontBold,
     color: white,
@@ -229,14 +262,13 @@ export async function generateSalarySlipPdf({
 
   y -= rowHeight;
 
-  // Safely get numeric values
+  // Safe numeric values
   const baseSalary = Number(salaryRecord.base_salary) || 0;
   const hra = Number(salaryRecord.hra) || 0;
   const allowances = Number(salaryRecord.allowances) || 0;
   const deductions = Number(salaryRecord.deductions) || 0;
   const netSalary = Number(salaryRecord.net_salary) || 0;
 
-  // Salary rows
   const salaryItems = [
     { label: 'Basic Salary', amount: baseSalary, isEarning: true, isTotal: false },
     { label: 'House Rent Allowance (HRA)', amount: hra, isEarning: true, isTotal: false },
@@ -266,7 +298,6 @@ export async function generateSalarySlipPdf({
       });
     }
 
-    // Row border
     page.drawLine({
       start: { x: tableX, y: y - rowHeight },
       end: { x: tableX + tableWidth, y: y - rowHeight },
@@ -279,17 +310,17 @@ export async function generateSalarySlipPdf({
 
     page.drawText(item.label, {
       x: tableX + 15,
-      y: y - 20,
+      y: y - 19,
       size: 9,
       font,
       color: labelColor,
     });
 
     const amountStr = formatCurrencyForPdf(item.amount);
-    const amountWidth = font.widthOfTextAtSize(amountStr, 9);
+    const amtWidth = font.widthOfTextAtSize(amountStr, 9);
     page.drawText(amountStr, {
-      x: tableX + tableWidth - amountWidth - 15,
-      y: y - 20,
+      x: tableX + tableWidth - amtWidth - 15,
+      y: y - 19,
       size: 9,
       font,
       color: item.isEarning ? labelColor : rgb(0.8, 0.15, 0.15),
@@ -299,9 +330,9 @@ export async function generateSalarySlipPdf({
   });
 
   // ============================================================
-  // NET SALARY - Big highlighted box
+  // NET SALARY - Big green highlighted box
   // ============================================================
-  const netRowHeight = 48;
+  const netRowHeight = 44;
   page.drawRectangle({
     x: tableX,
     y: y - netRowHeight,
@@ -312,7 +343,7 @@ export async function generateSalarySlipPdf({
 
   page.drawText('NET SALARY', {
     x: tableX + 15,
-    y: y - 30,
+    y: y - 28,
     size: 14,
     font: fontBold,
     color: white,
@@ -322,58 +353,97 @@ export async function generateSalarySlipPdf({
   const netAmountWidth = fontBold.widthOfTextAtSize(netAmountStr, 16);
   page.drawText(netAmountStr, {
     x: tableX + tableWidth - netAmountWidth - 15,
-    y: y - 30,
+    y: y - 28,
     size: 16,
     font: fontBold,
     color: white,
   });
 
-  y -= netRowHeight + 50;
+  y -= netRowHeight + 30;
 
   // ============================================================
-  // SIGNATURE
+  // SIGNATURE (tighter — moved up)
   // ============================================================
   page.drawLine({
-    start: { x: width - margin - 180, y: y },
+    start: { x: width - margin - 170, y: y },
     end: { x: width - margin, y: y },
     thickness: 0.5,
     color: textColor,
   });
 
   page.drawText('Authorized Signatory', {
-    x: width - margin - 145,
-    y: y - 15,
-    size: 9,
+    x: width - margin - 140,
+    y: y - 14,
+    size: 8,
     font: fontRegular,
     color: mutedColor,
   });
 
   // ============================================================
-  // FOOTER
+  // QR CODE
   // ============================================================
-  const footerY = margin + 50;
+  let qrImage: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null;
+  try {
+    const qrUrl = 'https://payrollflow.vercel.app';
+    const qrDataUrl = await QRCode.toDataURL(qrUrl, {
+      width: 200,
+      margin: 1,
+      color: { dark: '#1e4ec4', light: '#ffffff' },
+    });
+    const qrBase64 = qrDataUrl.split(',')[1];
+    const qrBytes = Buffer.from(qrBase64, 'base64');
+    qrImage = await pdfDoc.embedPng(qrBytes);
+  } catch (e) {
+    console.warn('Could not generate QR code:', e);
+  }
+
+  // ============================================================
+  // FOOTER - Tighter composition
+  // ============================================================
+  const footerY = margin + 20;
+
+  // QR code bottom-right
+  if (qrImage) {
+    const qrSize = 52;
+    page.drawImage(qrImage, {
+      x: width - margin - qrSize,
+      y: footerY - 5,
+      width: qrSize,
+      height: qrSize,
+    });
+    const verifyText = 'Verify Document';
+    const verifyWidth = fontRegular.widthOfTextAtSize(verifyText, 6);
+    page.drawText(verifyText, {
+      x: width - margin - qrSize / 2 - verifyWidth / 2,
+      y: footerY - 12,
+      size: 6,
+      font: fontRegular,
+      color: primaryColor,
+    });
+  }
 
   // Confidential banner
   page.drawRectangle({
     x: margin,
-    y: footerY + 5,
-    width: width - 2 * margin,
-    height: 22,
+    y: footerY + 50,
+    width: width - 2 * margin - (qrImage ? 70 : 0),
+    height: 20,
     color: rgb(0.97, 0.97, 0.97),
     borderColor: lineColor,
     borderWidth: 0.5,
   });
   page.drawText('CONFIDENTIAL PAYROLL DOCUMENT', {
-    x: margin + 15,
-    y: footerY + 12,
+    x: margin + 12,
+    y: footerY + 56,
     size: 7,
     font: fontBold,
     color: mutedColor,
   });
 
+  // Divider line
   page.drawLine({
-    start: { x: margin, y: footerY },
-    end: { x: width - margin, y: footerY },
+    start: { x: margin, y: footerY + 45 },
+    end: { x: width - margin - (qrImage ? 70 : 0), y: footerY + 45 },
     thickness: 0.5,
     color: lineColor,
   });
@@ -382,7 +452,7 @@ export async function generateSalarySlipPdf({
     'This is a system-generated salary slip and does not require a physical signature.',
     {
       x: margin,
-      y: footerY - 15,
+      y: footerY + 32,
       size: 7,
       font: fontRegular,
       color: mutedColor,
@@ -390,10 +460,10 @@ export async function generateSalarySlipPdf({
   );
 
   page.drawText(
-    `Generated on ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })} by ${companyName}`,
+    `Generated on ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })} by ${safeText(companyName)}`,
     {
       x: margin,
-      y: footerY - 28,
+      y: footerY + 20,
       size: 7,
       font: fontRegular,
       color: mutedColor,
@@ -411,27 +481,16 @@ export async function generateSalarySlipPdf({
     const password = birthYear ? `${firstName}${birthYear}` : employee.employee_id;
 
     page.drawText(
-      `Document Password: ${password}`,
+      `Document Password: ${safeText(password)}`,
       {
         x: margin,
-        y: footerY - 41,
+        y: footerY + 8,
         size: 7,
         font: fontRegular,
         color: mutedColor,
       }
     );
   }
-
-  // Verify link at bottom-right
-  const verifyText = 'Verify at payrollflow.vercel.app';
-  const verifyWidth = fontRegular.widthOfTextAtSize(verifyText, 7);
-  page.drawText(verifyText, {
-    x: width - margin - verifyWidth,
-    y: footerY - 41,
-    size: 7,
-    font: fontRegular,
-    color: primaryColor,
-  });
 
   return await pdfDoc.save();
 }

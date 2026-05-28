@@ -5,15 +5,18 @@ import type { Employee, SalaryRecord } from '@/types';
 
 export async function POST(request: Request) {
   try {
-    const { employeeIds, month, year } = (await request.json()) as {
+    const body = await request.json();
+    const { employeeIds, month, year } = body as {
       employeeIds: string[];
       month: string;
       year: string;
     };
 
+    console.log('[PDF Generate] Request:', { employeeIds, month, year });
+
     if (!employeeIds?.length || !month || !year) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields' },
+        { success: false, error: 'Missing required fields: employeeIds, month, year' },
         { status: 400 }
       );
     }
@@ -21,36 +24,61 @@ export async function POST(request: Request) {
     const results = {
       generated: 0,
       failed: 0,
+      errors: [] as string[],
       pdfs: [] as { employee_id: string; name: string; pdf: string }[],
     };
 
     for (const empId of employeeIds) {
       try {
         // Fetch employee
-        const { data: employee } = await supabase
+        const { data: employee, error: empError } = await supabase
           .from('employees')
           .select('*')
           .eq('employee_id', empId)
           .single();
 
+        if (empError) {
+          const msg = `Employee ${empId}: ${empError.message} (code: ${empError.code})`;
+          console.error('[PDF Generate]', msg);
+          results.errors.push(msg);
+          results.failed++;
+          continue;
+        }
+
         if (!employee) {
+          const msg = `Employee ${empId}: Not found in database`;
+          console.error('[PDF Generate]', msg);
+          results.errors.push(msg);
           results.failed++;
           continue;
         }
 
         // Fetch salary record
-        const { data: salaryRecord } = await supabase
+        const { data: salaryRecord, error: salaryError } = await supabase
           .from('salary_records')
           .select('*')
           .eq('employee_id', empId)
-          .eq('month', month)
-          .eq('year', year)
+          .eq('month', String(month))
+          .eq('year', String(year))
           .single();
 
-        if (!salaryRecord) {
+        if (salaryError) {
+          const msg = `Salary record for ${empId} (${month}/${year}): ${salaryError.message} (code: ${salaryError.code})`;
+          console.error('[PDF Generate]', msg);
+          results.errors.push(msg);
           results.failed++;
           continue;
         }
+
+        if (!salaryRecord) {
+          const msg = `No salary record found for ${empId} in ${month}/${year}`;
+          console.error('[PDF Generate]', msg);
+          results.errors.push(msg);
+          results.failed++;
+          continue;
+        }
+
+        console.log(`[PDF Generate] Generating PDF for ${empId} (${employee.name})`);
 
         // Generate PDF
         const pdfBytes = await generateSalarySlipPdf({
@@ -67,24 +95,29 @@ export async function POST(request: Request) {
           pdf: base64,
         });
         results.generated++;
+        console.log(`[PDF Generate] Success for ${empId}`);
       } catch (err) {
+        const msg = `PDF generation failed for ${empId}: ${err instanceof Error ? err.message : String(err)}`;
+        console.error('[PDF Generate]', msg);
+        results.errors.push(msg);
         results.failed++;
-        console.error(`PDF generation failed for ${empId}:`, err);
       }
     }
 
+    console.log(`[PDF Generate] Done: ${results.generated} generated, ${results.failed} failed`);
+
     return NextResponse.json({
-      success: true,
+      success: results.generated > 0,
       data: results,
-      message: `Generated ${results.generated} PDFs`,
+      message: results.generated > 0
+        ? `Generated ${results.generated} PDFs`
+        : `No PDFs generated. ${results.errors.join('; ')}`,
     });
   } catch (error) {
-    console.error('Salary generate API error:', error);
+    const msg = error instanceof Error ? error.message : 'Internal server error';
+    console.error('[PDF Generate] Fatal error:', msg);
     return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      },
+      { success: false, error: msg },
       { status: 500 }
     );
   }
