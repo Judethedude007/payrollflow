@@ -1,8 +1,9 @@
 // ============================================================
-// Professional PDF Salary Slip Generator
+// Professional PDF Salary Slip Generator — PDFKit
+// Supports: password protection, logo embedding, QR codes
 // ============================================================
 
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import PDFDocument from 'pdfkit';
 import type { Employee, SalaryRecord } from '@/types';
 import { formatCurrencyForPdf, getMonthName } from '@/utils/salary';
 import * as fs from 'fs';
@@ -17,15 +18,37 @@ interface GeneratePdfParams {
 }
 
 /**
- * Safely encode a string for WinAnsi (strip non-encodable chars)
+ * Collect a PDFKit stream into a Buffer
  */
-function safeText(text: string): string {
-  if (!text) return 'N/A';
-  return String(text).replace(/[^\x20-\x7E]/g, '');
+function streamToBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
 }
 
 /**
- * Generate a professional salary slip PDF
+ * Resolve the absolute path to the logo
+ */
+function getLogoPath(): string | null {
+  // Try multiple possible locations and extensions
+  const extensions = ['logo.jpg', 'logo.png', 'logo.jpeg'];
+  for (const filename of extensions) {
+    const candidates = [
+      path.join(process.cwd(), 'public', filename),
+      path.resolve('public', filename),
+    ];
+    for (const p of candidates) {
+      if (fs.existsSync(p)) return p;
+    }
+  }
+  return null;
+}
+
+/**
+ * Generate a professional salary slip PDF with password protection
  */
 export async function generateSalarySlipPdf({
   employee,
@@ -33,234 +56,129 @@ export async function generateSalarySlipPdf({
   companyName = 'PayrollFlow',
   withPassword = true,
 }: GeneratePdfParams): Promise<Uint8Array> {
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([595.28, 841.89]); // A4 size
-  const { width, height } = page.getSize();
-
-  // Fonts
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
-
-  // Colors
-  const primaryColor = rgb(0.118, 0.306, 0.769);
-  const darkBlue = rgb(0.059, 0.173, 0.412);
-  const textColor = rgb(0.1, 0.1, 0.1);
-  const mutedColor = rgb(0.45, 0.45, 0.45);
-  const lineColor = rgb(0.85, 0.85, 0.85);
-  const headerBgColor = rgb(0.118, 0.306, 0.769);
-  const lightBgColor = rgb(0.96, 0.97, 0.99);
-  const accentGreen = rgb(0.086, 0.533, 0.318);
-  const white = rgb(1, 1, 1);
-
-  const margin = 50;
-  let y = height - margin;
-
-  // ============================================================
-  // EMBED LOGO
-  // ============================================================
-  let logoImage: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null;
-  try {
-    const logoPath = path.join(process.cwd(), 'public', 'logo.png');
-    if (fs.existsSync(logoPath)) {
-      const logoBytes = fs.readFileSync(logoPath);
-      logoImage = await pdfDoc.embedPng(logoBytes);
-    }
-  } catch (e) {
-    console.warn('Could not embed logo:', e);
+  // Build password
+  const firstName = (employee.name || '').split(' ')[0]?.toLowerCase() || '';
+  let birthYear = '';
+  if (employee.date_of_birth) {
+    const parts = String(employee.date_of_birth).split(/[-/]/);
+    birthYear = parts.find(p => p.length === 4) || parts[parts.length - 1] || '';
   }
+  const password = birthYear ? `${firstName}${birthYear}` : employee.employee_id;
 
-  // ============================================================
-  // HEADER - Company banner
-  // ============================================================
-  const headerHeight = 80;
-
-  // Dark blue base
-  page.drawRectangle({
-    x: 0,
-    y: y - headerHeight + 30,
-    width: width,
-    height: headerHeight,
-    color: darkBlue,
-  });
-
-  // Lighter overlay for gradient feel
-  page.drawRectangle({
-    x: 0,
-    y: y - headerHeight + 50,
-    width: width,
-    height: headerHeight - 20,
-    color: headerBgColor,
-  });
-
-  // Logo (if available)
-  let textStartX = margin;
-  if (logoImage) {
-    const logoScale = 36 / logoImage.height;
-    const logoW = logoImage.width * logoScale;
-    const logoH = 36;
-    page.drawImage(logoImage, {
-      x: margin,
-      y: y - 30,
-      width: logoW,
-      height: logoH,
-    });
-    textStartX = margin + logoW + 10;
-  }
-
-  // Company name
-  page.drawText(safeText(companyName.toUpperCase()), {
-    x: textStartX,
-    y: y - 12,
-    size: 22,
-    font: fontBold,
-    color: white,
-  });
-
-  // Subtitle
-  page.drawText('SALARY SLIP', {
-    x: textStartX,
-    y: y - 32,
-    size: 10,
-    font: fontRegular,
-    color: rgb(0.8, 0.85, 1),
-  });
-
-  // Month/Year on right side
-  const monthName = getMonthName(salaryRecord.month);
-  const monthYear = `${monthName} ${salaryRecord.year}`;
-  const monthYearWidth = fontBold.widthOfTextAtSize(monthYear, 14);
-  page.drawText(monthYear, {
-    x: width - margin - monthYearWidth,
-    y: y - 15,
-    size: 14,
-    font: fontBold,
-    color: white,
-  });
-
-  // Generated Date (uses the salary month, not today)
-  const generatedDate = `Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`;
-  const genDateWidth = fontRegular.widthOfTextAtSize(generatedDate, 8);
-  page.drawText(generatedDate, {
-    x: width - margin - genDateWidth,
-    y: y - 32,
-    size: 8,
-    font: fontRegular,
-    color: rgb(0.8, 0.85, 1),
-  });
-
-  y -= headerHeight + 25;
-
-  // ============================================================
-  // EMPLOYEE DETAILS - Card style
-  // ============================================================
-  const detailsBoxHeight = 82;
-  page.drawRectangle({
-    x: margin,
-    y: y - detailsBoxHeight + 12,
-    width: width - 2 * margin,
-    height: detailsBoxHeight,
-    color: lightBgColor,
-    borderColor: lineColor,
-    borderWidth: 0.5,
-  });
-
-  page.drawText('EMPLOYEE DETAILS', {
-    x: margin + 15,
-    y: y,
-    size: 9,
-    font: fontBold,
-    color: primaryColor,
-  });
-
-  y -= 20;
-
-  const col1X = margin + 15;
-  const col2X = width / 2 + 20;
-  const labelOffset = 100;
-  const detailsLineHeight = 18;
-
-  const drawDetail = (label: string, value: string, x: number, currentY: number) => {
-    page.drawText(label, {
-      x,
-      y: currentY,
-      size: 8,
-      font: fontRegular,
-      color: mutedColor,
-    });
-    page.drawText(safeText(value), {
-      x: x + labelOffset,
-      y: currentY,
-      size: 9,
-      font: fontBold,
-      color: textColor,
-    });
+  // Create PDF with password protection
+  const docOptions: PDFKit.PDFDocumentOptions = {
+    size: 'A4',
+    margins: { top: 50, bottom: 40, left: 50, right: 50 },
+    info: {
+      Title: `Salary Slip - ${employee.name} - ${getMonthName(salaryRecord.month)} ${salaryRecord.year}`,
+      Author: companyName,
+      Subject: 'Salary Slip',
+      Creator: 'PayrollFlow',
+    },
   };
 
-  drawDetail('Employee ID', employee.employee_id, col1X, y);
-  drawDetail('Department', employee.department || 'N/A', col2X, y);
-  y -= detailsLineHeight;
+  if (withPassword) {
+    docOptions.userPassword = password;
+    docOptions.ownerPassword = 'payrollflow_admin_2026';
+    docOptions.permissions = {
+      printing: 'highResolution',
+      modifying: false,
+      copying: false,
+      annotating: false,
+      fillingForms: false,
+      contentAccessibility: true,
+      documentAssembly: false,
+    };
+  }
 
-  drawDetail('Employee Name', employee.name, col1X, y);
-  drawDetail('Designation', employee.designation || 'N/A', col2X, y);
-  y -= detailsLineHeight;
+  const doc = new PDFDocument(docOptions);
+  const bufferPromise = streamToBuffer(doc);
 
-  drawDetail('Email', employee.email, col1X, y);
-  drawDetail('Pay Period', monthYear, col2X, y);
+  const pageWidth = 595.28;
+  const margin = 50;
+  const contentWidth = pageWidth - 2 * margin;
 
-  y -= 35;
+  // ============================================================
+  // HEADER — Blue banner with logo
+  // ============================================================
+  doc.rect(0, 0, pageWidth, 90).fill('#1e4ec4');
+  doc.rect(0, 70, pageWidth, 20).fill('#0f2c69'); // Dark bottom strip
+
+  // Logo
+  const logoPath = getLogoPath();
+  if (logoPath) {
+    try {
+      doc.image(logoPath, margin, 18, { height: 40 });
+    } catch (e) {
+      console.warn('Logo embed failed:', e);
+    }
+  }
+
+  // Company name — position after logo
+  const nameX = logoPath ? margin + 50 : margin;
+  doc.fontSize(22).font('Helvetica-Bold').fillColor('#ffffff')
+    .text(companyName.toUpperCase(), nameX, 22, { lineBreak: false });
+
+  // Subtitle
+  doc.fontSize(10).font('Helvetica').fillColor('#c4d4f5')
+    .text('SALARY SLIP', nameX, 48, { lineBreak: false });
+
+  // Month/Year right side
+  const monthName = getMonthName(salaryRecord.month);
+  const monthYear = `${monthName} ${salaryRecord.year}`;
+  doc.fontSize(14).font('Helvetica-Bold').fillColor('#ffffff')
+    .text(monthYear, margin, 25, { width: contentWidth, align: 'right' });
+
+  // Generated date
+  const genDate = `Generated: ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+  doc.fontSize(8).font('Helvetica').fillColor('#c4d4f5')
+    .text(genDate, margin, 48, { width: contentWidth, align: 'right' });
+
+  // ============================================================
+  // EMPLOYEE DETAILS — Card
+  // ============================================================
+  const detailsY = 110;
+
+  // Card background
+  doc.roundedRect(margin, detailsY, contentWidth, 85, 4)
+    .fillAndStroke('#f5f7fb', '#e2e5ed');
+
+  // Section title
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#1e4ec4')
+    .text('EMPLOYEE DETAILS', margin + 15, detailsY + 10);
+
+  // Details grid
+  const col1 = margin + 15;
+  const col1Val = margin + 115;
+  const col2 = pageWidth / 2 + 15;
+  const col2Val = pageWidth / 2 + 115;
+  const lineH = 18;
+  let dy = detailsY + 28;
+
+  const drawField = (label: string, value: string, lx: number, vx: number, fy: number) => {
+    doc.fontSize(8).font('Helvetica').fillColor('#72788a').text(label, lx, fy, { lineBreak: false });
+    doc.fontSize(9).font('Helvetica-Bold').fillColor('#1a1a1a').text(value || 'N/A', vx, fy, { lineBreak: false });
+  };
+
+  drawField('Employee ID', employee.employee_id, col1, col1Val, dy);
+  drawField('Department', employee.department || 'N/A', col2, col2Val, dy);
+  dy += lineH;
+  drawField('Employee Name', employee.name, col1, col1Val, dy);
+  drawField('Designation', employee.designation || 'N/A', col2, col2Val, dy);
+  dy += lineH;
+  drawField('Email', employee.email, col1, col1Val, dy);
+  drawField('Pay Period', monthYear, col2, col2Val, dy);
 
   // ============================================================
   // SALARY BREAKDOWN TABLE
   // ============================================================
-  page.drawText('SALARY BREAKDOWN', {
-    x: margin,
-    y,
-    size: 9,
-    font: fontBold,
-    color: primaryColor,
-  });
+  const tableY = detailsY + 105;
 
-  y -= 5;
-  page.drawLine({
-    start: { x: margin, y },
-    end: { x: width - margin, y },
-    thickness: 1.5,
-    color: primaryColor,
-  });
-  y -= 2;
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#1e4ec4')
+    .text('SALARY BREAKDOWN', margin, tableY);
 
-  const tableX = margin;
-  const tableWidth = width - 2 * margin;
-  const rowHeight = 30;
-
-  // Table header
-  page.drawRectangle({
-    x: tableX,
-    y: y - rowHeight,
-    width: tableWidth,
-    height: rowHeight,
-    color: headerBgColor,
-  });
-
-  page.drawText('Component', {
-    x: tableX + 15,
-    y: y - 19,
-    size: 9,
-    font: fontBold,
-    color: white,
-  });
-
-  const amountLabel = 'Amount (INR)';
-  const amountLabelWidth = fontBold.widthOfTextAtSize(amountLabel, 9);
-  page.drawText(amountLabel, {
-    x: tableX + tableWidth - amountLabelWidth - 15,
-    y: y - 19,
-    size: 9,
-    font: fontBold,
-    color: white,
-  });
-
-  y -= rowHeight;
+  doc.moveTo(margin, tableY + 14).lineTo(margin + contentWidth, tableY + 14)
+    .strokeColor('#1e4ec4').lineWidth(1.5).stroke();
 
   // Safe numeric values
   const baseSalary = Number(salaryRecord.base_salary) || 0;
@@ -268,229 +186,130 @@ export async function generateSalarySlipPdf({
   const allowances = Number(salaryRecord.allowances) || 0;
   const deductions = Number(salaryRecord.deductions) || 0;
   const netSalary = Number(salaryRecord.net_salary) || 0;
+  const totalEarnings = baseSalary + hra + allowances;
 
-  const salaryItems = [
-    { label: 'Basic Salary', amount: baseSalary, isEarning: true, isTotal: false },
-    { label: 'House Rent Allowance (HRA)', amount: hra, isEarning: true, isTotal: false },
-    { label: 'Other Allowances', amount: allowances, isEarning: true, isTotal: false },
-    { label: 'Total Earnings', amount: baseSalary + hra + allowances, isEarning: true, isTotal: true },
-    { label: 'Deductions', amount: deductions, isEarning: false, isTotal: false },
+  // Table header
+  const thY = tableY + 18;
+  const rowH = 30;
+  doc.rect(margin, thY, contentWidth, rowH).fill('#1e4ec4');
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#ffffff')
+    .text('Component', margin + 15, thY + 10, { lineBreak: false });
+  doc.fontSize(9).font('Helvetica-Bold').fillColor('#ffffff')
+    .text('Amount (INR)', margin + contentWidth - 120, thY + 10, { width: 105, align: 'right' });
+
+  // Table rows
+  const rows = [
+    { label: 'Basic Salary', amount: baseSalary, isTotal: false, isDeduction: false },
+    { label: 'House Rent Allowance (HRA)', amount: hra, isTotal: false, isDeduction: false },
+    { label: 'Other Allowances', amount: allowances, isTotal: false, isDeduction: false },
+    { label: 'Total Earnings', amount: totalEarnings, isTotal: true, isDeduction: false },
+    { label: 'Deductions', amount: deductions, isTotal: false, isDeduction: true },
   ];
 
-  salaryItems.forEach((item, index) => {
-    const isAlt = index % 2 === 0;
-
-    if (item.isTotal) {
-      page.drawRectangle({
-        x: tableX,
-        y: y - rowHeight,
-        width: tableWidth,
-        height: rowHeight,
-        color: rgb(0.91, 0.94, 0.99),
-      });
-    } else if (isAlt) {
-      page.drawRectangle({
-        x: tableX,
-        y: y - rowHeight,
-        width: tableWidth,
-        height: rowHeight,
-        color: lightBgColor,
-      });
+  let ry = thY + rowH;
+  rows.forEach((row, i) => {
+    // Row background
+    if (row.isTotal) {
+      doc.rect(margin, ry, contentWidth, rowH).fill('#e8edf8');
+    } else if (i % 2 === 0) {
+      doc.rect(margin, ry, contentWidth, rowH).fill('#f5f7fb');
+    } else {
+      doc.rect(margin, ry, contentWidth, rowH).fill('#ffffff');
     }
 
-    page.drawLine({
-      start: { x: tableX, y: y - rowHeight },
-      end: { x: tableX + tableWidth, y: y - rowHeight },
-      thickness: 0.5,
-      color: lineColor,
-    });
+    // Row border
+    doc.moveTo(margin, ry + rowH).lineTo(margin + contentWidth, ry + rowH)
+      .strokeColor('#e2e5ed').lineWidth(0.5).stroke();
 
-    const font = item.isTotal ? fontBold : fontRegular;
-    const labelColor = item.isTotal ? primaryColor : textColor;
+    // Label
+    const font = row.isTotal ? 'Helvetica-Bold' : 'Helvetica';
+    const labelColor = row.isTotal ? '#1e4ec4' : '#1a1a1a';
+    doc.fontSize(9).font(font).fillColor(labelColor)
+      .text(row.label, margin + 15, ry + 10, { lineBreak: false });
 
-    page.drawText(item.label, {
-      x: tableX + 15,
-      y: y - 19,
-      size: 9,
-      font,
-      color: labelColor,
-    });
+    // Amount
+    const amountColor = row.isDeduction ? '#cc2626' : labelColor;
+    doc.fontSize(9).font(font).fillColor(amountColor)
+      .text(formatCurrencyForPdf(row.amount), margin + contentWidth - 120, ry + 10, { width: 105, align: 'right' });
 
-    const amountStr = formatCurrencyForPdf(item.amount);
-    const amtWidth = font.widthOfTextAtSize(amountStr, 9);
-    page.drawText(amountStr, {
-      x: tableX + tableWidth - amtWidth - 15,
-      y: y - 19,
-      size: 9,
-      font,
-      color: item.isEarning ? labelColor : rgb(0.8, 0.15, 0.15),
-    });
-
-    y -= rowHeight;
+    ry += rowH;
   });
 
   // ============================================================
-  // NET SALARY - Big green highlighted box
+  // NET SALARY — Big green box
   // ============================================================
-  const netRowHeight = 44;
-  page.drawRectangle({
-    x: tableX,
-    y: y - netRowHeight,
-    width: tableWidth,
-    height: netRowHeight,
-    color: accentGreen,
-  });
+  const netH = 44;
+  doc.rect(margin, ry, contentWidth, netH).fill('#16874f');
 
-  page.drawText('NET SALARY', {
-    x: tableX + 15,
-    y: y - 28,
-    size: 14,
-    font: fontBold,
-    color: white,
-  });
+  doc.fontSize(14).font('Helvetica-Bold').fillColor('#ffffff')
+    .text('NET SALARY', margin + 15, ry + 15, { lineBreak: false });
 
-  const netAmountStr = formatCurrencyForPdf(netSalary);
-  const netAmountWidth = fontBold.widthOfTextAtSize(netAmountStr, 16);
-  page.drawText(netAmountStr, {
-    x: tableX + tableWidth - netAmountWidth - 15,
-    y: y - 28,
-    size: 16,
-    font: fontBold,
-    color: white,
-  });
+  doc.fontSize(16).font('Helvetica-Bold').fillColor('#ffffff')
+    .text(formatCurrencyForPdf(netSalary), margin + contentWidth - 160, ry + 14, { width: 145, align: 'right' });
 
-  y -= netRowHeight + 30;
+  ry += netH;
 
   // ============================================================
-  // SIGNATURE (tighter — moved up)
+  // SIGNATURE — Tight
   // ============================================================
-  page.drawLine({
-    start: { x: width - margin - 170, y: y },
-    end: { x: width - margin, y: y },
-    thickness: 0.5,
-    color: textColor,
-  });
+  const sigY = ry + 30;
+  doc.moveTo(pageWidth - margin - 160, sigY).lineTo(pageWidth - margin, sigY)
+    .strokeColor('#1a1a1a').lineWidth(0.5).stroke();
 
-  page.drawText('Authorized Signatory', {
-    x: width - margin - 140,
-    y: y - 14,
-    size: 8,
-    font: fontRegular,
-    color: mutedColor,
-  });
+  doc.fontSize(8).font('Helvetica').fillColor('#72788a')
+    .text('Authorized Signatory', pageWidth - margin - 135, sigY + 5, { lineBreak: false });
 
   // ============================================================
   // QR CODE
   // ============================================================
-  let qrImage: Awaited<ReturnType<typeof pdfDoc.embedPng>> | null = null;
+  const footerY = 735;
+
   try {
-    const qrUrl = 'https://payrollflow.vercel.app';
-    const qrDataUrl = await QRCode.toDataURL(qrUrl, {
-      width: 200,
-      margin: 1,
-      color: { dark: '#1e4ec4', light: '#ffffff' },
+    const qrDataUrl = await QRCode.toDataURL('https://payrollflow.vercel.app', {
+      width: 200, margin: 1, color: { dark: '#1e4ec4', light: '#ffffff' },
     });
     const qrBase64 = qrDataUrl.split(',')[1];
-    const qrBytes = Buffer.from(qrBase64, 'base64');
-    qrImage = await pdfDoc.embedPng(qrBytes);
+    const qrBuffer = Buffer.from(qrBase64, 'base64');
+    doc.image(qrBuffer, pageWidth - margin - 48, footerY, { width: 48, height: 48 });
+    doc.fontSize(6).font('Helvetica').fillColor('#1e4ec4')
+      .text('Verify Document', pageWidth - margin - 52, footerY + 50, { width: 56, align: 'center' });
   } catch (e) {
-    console.warn('Could not generate QR code:', e);
+    console.warn('QR code failed:', e);
   }
 
   // ============================================================
-  // FOOTER - Tighter composition
+  // FOOTER
   // ============================================================
-  const footerY = margin + 20;
-
-  // QR code bottom-right
-  if (qrImage) {
-    const qrSize = 52;
-    page.drawImage(qrImage, {
-      x: width - margin - qrSize,
-      y: footerY - 5,
-      width: qrSize,
-      height: qrSize,
-    });
-    const verifyText = 'Verify Document';
-    const verifyWidth = fontRegular.widthOfTextAtSize(verifyText, 6);
-    page.drawText(verifyText, {
-      x: width - margin - qrSize / 2 - verifyWidth / 2,
-      y: footerY - 12,
-      size: 6,
-      font: fontRegular,
-      color: primaryColor,
-    });
-  }
-
   // Confidential banner
-  page.drawRectangle({
-    x: margin,
-    y: footerY + 50,
-    width: width - 2 * margin - (qrImage ? 70 : 0),
-    height: 20,
-    color: rgb(0.97, 0.97, 0.97),
-    borderColor: lineColor,
-    borderWidth: 0.5,
-  });
-  page.drawText('CONFIDENTIAL PAYROLL DOCUMENT', {
-    x: margin + 12,
-    y: footerY + 56,
-    size: 7,
-    font: fontBold,
-    color: mutedColor,
-  });
+  doc.roundedRect(margin, footerY + 2, contentWidth - 65, 18, 2)
+    .fillAndStroke('#f5f5f5', '#e2e5ed');
 
-  // Divider line
-  page.drawLine({
-    start: { x: margin, y: footerY + 45 },
-    end: { x: width - margin - (qrImage ? 70 : 0), y: footerY + 45 },
-    thickness: 0.5,
-    color: lineColor,
-  });
+  doc.fontSize(7).font('Helvetica-Bold').fillColor('#72788a')
+    .text('CONFIDENTIAL PAYROLL DOCUMENT', margin + 10, footerY + 8, { lineBreak: false });
 
-  page.drawText(
-    'This is a system-generated salary slip and does not require a physical signature.',
-    {
-      x: margin,
-      y: footerY + 32,
-      size: 7,
-      font: fontRegular,
-      color: mutedColor,
-    }
-  );
+  // Footer text
+  doc.fontSize(7).font('Helvetica').fillColor('#72788a')
+    .text(
+      'This is a system-generated salary slip and does not require a physical signature.',
+      margin, footerY + 26
+    );
 
-  page.drawText(
-    `Generated on ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })} by ${safeText(companyName)}`,
-    {
-      x: margin,
-      y: footerY + 20,
-      size: 7,
-      font: fontRegular,
-      color: mutedColor,
-    }
-  );
+  doc.fontSize(7).font('Helvetica').fillColor('#72788a')
+    .text(
+      `Generated on ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })} by ${companyName}`,
+      margin, footerY + 38
+    );
 
   // Password info
   if (withPassword) {
-    const firstName = (employee.name || '').split(' ')[0]?.toLowerCase() || '';
-    let birthYear = '';
-    if (employee.date_of_birth) {
-      const parts = String(employee.date_of_birth).split(/[-/]/);
-      birthYear = parts.find(p => p.length === 4) || parts[parts.length - 1] || '';
-    }
-    const password = birthYear ? `${firstName}${birthYear}` : employee.employee_id;
-
-    page.drawText(
-      `Document Password: ${safeText(password)}`,
-      {
-        x: margin,
-        y: footerY + 8,
-        size: 7,
-        font: fontRegular,
-        color: mutedColor,
-      }
-    );
+    doc.fontSize(7).font('Helvetica').fillColor('#72788a')
+      .text(`Document Password: ${password}`, margin, footerY + 50);
   }
 
-  return await pdfDoc.save();
+  // ============================================================
+  // DONE
+  // ============================================================
+  doc.end();
+  const buffer = await bufferPromise;
+  return new Uint8Array(buffer);
 }
