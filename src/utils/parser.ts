@@ -87,6 +87,41 @@ const COLUMN_MAP: Record<string, string> = {
 };
 
 /**
+ * Convert Excel serial date number to a DD-MM-YYYY string.
+ * Excel serial dates count days since Jan 1, 1900 (with a leap-year bug).
+ */
+function excelSerialToDate(serial: number): string {
+  // Excel incorrectly treats 1900 as a leap year — adjust for dates after Feb 28, 1900
+  const adjusted = serial > 59 ? serial - 1 : serial;
+  const epoch = new Date(1899, 11, 31); // Dec 31, 1899
+  const date = new Date(epoch.getTime() + adjusted * 86400000);
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}-${month}-${year}`;
+}
+
+/**
+ * Parse a date_of_birth value from Excel — could be a serial number, a Date, or a string
+ */
+function parseDateOfBirth(value: unknown): string {
+  if (!value && value !== 0) return '';
+  // If it's a number, it's an Excel serial date
+  if (typeof value === 'number') {
+    return excelSerialToDate(value);
+  }
+  // If it's already a Date object
+  if (value instanceof Date) {
+    const day = String(value.getDate()).padStart(2, '0');
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const year = value.getFullYear();
+    return `${day}-${month}-${year}`;
+  }
+  // Otherwise treat as string
+  return String(value).trim();
+}
+
+/**
  * Parse an uploaded Excel or CSV file into PayrollRow array
  */
 export function parseExcelFile(buffer: ArrayBuffer): PayrollRow[] {
@@ -131,7 +166,7 @@ export function parseExcelFile(buffer: ArrayBuffer): PayrollRow[] {
       email: String(mapped.email || '').trim(),
       designation: String(mapped.designation || '').trim(),
       department: String(mapped.department || '').trim(),
-      date_of_birth: String(mapped.date_of_birth || '').trim(),
+      date_of_birth: parseDateOfBirth(mapped.date_of_birth),
       base_salary: baseSalary,
       hra,
       allowances,
