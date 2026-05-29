@@ -41,8 +41,8 @@ export function Header({ sidebarCollapsed, onMenuToggle }: HeaderProps) {
 
   return (
     <header
-      className={`sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/80 backdrop-blur-md px-6 transition-all duration-300 ${
-        sidebarCollapsed ? 'ml-[68px]' : 'ml-[260px]'
+      className={`sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/80 backdrop-blur-md px-4 md:px-6 transition-all duration-300 ${
+        sidebarCollapsed ? 'lg:ml-[68px]' : 'lg:ml-[260px]'
       }`}
     >
       <div className="flex items-center gap-4">
@@ -61,7 +61,7 @@ export function Header({ sidebarCollapsed, onMenuToggle }: HeaderProps) {
             {pageInfo.title}
           </h2>
           {pageInfo.description && (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground hidden sm:block">
               {pageInfo.description}
             </p>
           )}

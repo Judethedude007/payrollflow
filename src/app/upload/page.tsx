@@ -464,7 +464,7 @@ export default function UploadPage() {
 
       {/* Action Buttons */}
       {parsedRows.length > 0 && (
-        <div className="flex flex-wrap gap-3 rounded-xl border bg-card p-4 animate-slide-up">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3 rounded-xl border bg-card p-4 animate-slide-up">
           {!savedToDb ? (
             <Button
               onClick={handleSaveToDatabase}

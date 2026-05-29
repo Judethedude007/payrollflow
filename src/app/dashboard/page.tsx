@@ -53,7 +53,7 @@ export default function DashboardPage() {
         <p className="text-muted-foreground">
           Here&apos;s your payroll overview for {currentMonth} {currentYear}.
         </p>
-        <div className="flex gap-3 mt-4">
+        <div className="flex flex-col sm:flex-row gap-3 mt-4">
           <Button onClick={() => router.push('/upload')} className="gap-2">
             <Upload className="h-4 w-4" />
             Upload Payroll
