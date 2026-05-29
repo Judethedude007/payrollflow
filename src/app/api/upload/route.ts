@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import type { PayrollRow } from '@/types';
 import { calculateNetSalary, calculateGrossSalary } from '@/utils/salary';
+import { sanitizeString } from '@/utils/sanitize';
 
 export async function POST(request: Request) {
   try {
@@ -22,16 +23,16 @@ export async function POST(request: Request) {
 
     for (const row of rows) {
       try {
-        // Upsert employee
+        // Upsert employee (sanitize string inputs)
         const { error: empError } = await supabase
           .from('employees')
           .upsert(
             {
-              employee_id: row.employee_id,
-              name: row.name,
-              email: row.email,
-              designation: row.designation || '',
-              department: row.department || '',
+              employee_id: sanitizeString(row.employee_id),
+              name: sanitizeString(row.name),
+              email: sanitizeString(row.email).toLowerCase(),
+              designation: sanitizeString(row.designation) || '',
+              department: sanitizeString(row.department) || '',
               date_of_birth: row.date_of_birth || null,
             },
             { onConflict: 'employee_id' }

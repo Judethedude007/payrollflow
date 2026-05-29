@@ -5,6 +5,8 @@ import { useDropzone } from 'react-dropzone';
 import { Upload, FileSpreadsheet, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
+import { isValidUploadFile } from '@/utils/sanitize';
 
 interface FileDropzoneProps {
   onFileAccepted: (file: File) => void;
@@ -13,6 +15,9 @@ interface FileDropzoneProps {
   isProcessing: boolean;
 }
 
+const MAX_SIZE_MB = 5;
+const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
+
 export function FileDropzone({
   onFileAccepted,
   selectedFile,
@@ -20,9 +25,24 @@ export function FileDropzone({
   isProcessing,
 }: FileDropzoneProps) {
   const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
+    (acceptedFiles: File[], rejectedFiles: unknown[]) => {
+      // Handle rejected files from react-dropzone
+      if (rejectedFiles && (rejectedFiles as Array<unknown>).length > 0) {
+        toast.error('File rejected', {
+          description: 'Only .csv, .xlsx, and .xls files under 5MB are accepted.',
+        });
+        return;
+      }
+
       if (acceptedFiles.length > 0) {
-        onFileAccepted(acceptedFiles[0]);
+        const file = acceptedFiles[0];
+        // Run our own validation (MIME + size)
+        const validation = isValidUploadFile(file);
+        if (!validation.valid) {
+          toast.error('Invalid file', { description: validation.error });
+          return;
+        }
+        onFileAccepted(file);
       }
     },
     [onFileAccepted]
@@ -37,10 +57,16 @@ export function FileDropzone({
         'text/csv': ['.csv'],
       },
       maxFiles: 1,
+      maxSize: MAX_SIZE_BYTES,
       disabled: isProcessing,
     });
 
   if (selectedFile) {
+    const sizeMB = selectedFile.size / (1024 * 1024);
+    const sizeLabel = sizeMB >= 1
+      ? `${sizeMB.toFixed(1)} MB`
+      : `${(selectedFile.size / 1024).toFixed(1)} KB`;
+
     return (
       <div className="rounded-xl border-2 border-dashed border-primary/30 bg-primary/5 p-6 animate-fade-in">
         <div className="flex items-center justify-between">
@@ -51,8 +77,7 @@ export function FileDropzone({
             <div>
               <p className="font-semibold text-sm">{selectedFile.name}</p>
               <p className="text-xs text-muted-foreground">
-                {(selectedFile.size / 1024).toFixed(1)} KB •{' '}
-                {selectedFile.type || 'spreadsheet'}
+                {sizeLabel} • {selectedFile.type || 'spreadsheet'}
               </p>
             </div>
           </div>
@@ -102,7 +127,9 @@ export function FileDropzone({
         <div>
           <p className="text-lg font-semibold mb-1">
             {isDragActive
-              ? 'Drop your file here'
+              ? isDragReject
+                ? 'Unsupported file type!'
+                : 'Drop your file here'
               : 'Drag & drop your payroll file'}
           </p>
           <p className="text-sm text-muted-foreground">
@@ -112,7 +139,7 @@ export function FileDropzone({
             </span>
           </p>
           <p className="text-xs text-muted-foreground mt-2">
-            Supports .xlsx, .xls, and .csv files
+            Supports .xlsx, .xls, and .csv files • Max {MAX_SIZE_MB}MB
           </p>
         </div>
       </div>

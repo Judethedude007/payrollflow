@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -14,12 +14,20 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FileDropzone } from '@/components/upload/file-dropzone';
-import { PreviewTable } from '@/components/upload/preview-table';
 import { ValidationSummary } from '@/components/upload/validation-summary';
 import { EmptyState } from '@/components/shared/empty-state';
+import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { parseExcelFile } from '@/utils/parser';
 import { validatePayrollData } from '@/utils/validation';
 import type { PayrollRow, ValidationResult } from '@/types';
+
+// Lazy load heavy components
+const PreviewTable = lazy(() =>
+  import('@/components/upload/preview-table').then((m) => ({ default: m.PreviewTable }))
+);
+const EditRowModal = lazy(() =>
+  import('@/components/upload/edit-row-modal').then((m) => ({ default: m.EditRowModal }))
+);
 
 type Step = 'upload' | 'preview' | 'actions';
 
@@ -37,6 +45,11 @@ export default function UploadPage() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [savedToDb, setSavedToDb] = useState(false);
 
+  // Edit modal state
+  const [editingRow, setEditingRow] = useState<PayrollRow | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [editedRows, setEditedRows] = useState<Set<number>>(new Set());
+
   useEffect(() => {
     const isAuth = localStorage.getItem('payrollflow_auth');
     if (isAuth !== 'true') {
@@ -44,9 +57,23 @@ export default function UploadPage() {
     }
   }, [router]);
 
+  // Re-validate whenever parsedRows changes
+  const revalidate = useCallback((rows: PayrollRow[]) => {
+    // Reset validation state on each row before re-validating
+    const cleanRows = rows.map((r) => ({ ...r, isValid: true, errors: [] }));
+    const result = validatePayrollData(cleanRows);
+    const allRows = [...result.validRows, ...result.invalidRows].sort(
+      (a, b) => a.rowIndex - b.rowIndex
+    );
+    setParsedRows(allRows);
+    setValidationResult(result);
+    return result;
+  }, []);
+
   const handleFileAccepted = async (file: File) => {
     setSelectedFile(file);
     setIsProcessing(true);
+    setEditedRows(new Set());
 
     try {
       const buffer = await file.arrayBuffer();
@@ -61,14 +88,12 @@ export default function UploadPage() {
         return;
       }
 
-      const result = validatePayrollData(rows);
-      setParsedRows([...result.validRows, ...result.invalidRows]);
-      setValidationResult(result);
+      const result = revalidate(rows);
       setCurrentStep('preview');
 
       if (result.errorCount > 0) {
         toast.warning(`${result.errorCount} rows have validation errors`, {
-          description: 'Review the errors below before proceeding.',
+          description: 'Review and fix errors below before saving.',
         });
       } else {
         toast.success(`${result.totalRows} rows parsed successfully`, {
@@ -94,14 +119,84 @@ export default function UploadPage() {
     setValidationResult(null);
     setCurrentStep('upload');
     setSavedToDb(false);
+    setEditedRows(new Set());
   };
+
+  // ========== EDIT & DELETE HANDLERS ==========
+
+  const handleEditRow = useCallback(
+    (rowIndex: number) => {
+      const row = parsedRows.find((r) => r.rowIndex === rowIndex);
+      if (row) {
+        setEditingRow(row);
+        setEditModalOpen(true);
+      }
+    },
+    [parsedRows]
+  );
+
+  const handleSaveEdit = useCallback(
+    (updatedRow: PayrollRow) => {
+      const newRows = parsedRows.map((r) =>
+        r.rowIndex === updatedRow.rowIndex ? updatedRow : r
+      );
+      revalidate(newRows);
+
+      // Track edited rows for green flash
+      setEditedRows((prev) => {
+        const next = new Set(prev);
+        next.add(updatedRow.rowIndex);
+        return next;
+      });
+
+      setEditModalOpen(false);
+      setEditingRow(null);
+
+      toast.success('Row updated', {
+        description: `Employee ${updatedRow.employee_id} has been corrected.`,
+      });
+
+      // Clear green flash after 3 seconds
+      setTimeout(() => {
+        setEditedRows((prev) => {
+          const next = new Set(prev);
+          next.delete(updatedRow.rowIndex);
+          return next;
+        });
+      }, 3000);
+    },
+    [parsedRows, revalidate]
+  );
+
+  const handleDeleteRow = useCallback(
+    (rowIndex: number) => {
+      const row = parsedRows.find((r) => r.rowIndex === rowIndex);
+      const newRows = parsedRows.filter((r) => r.rowIndex !== rowIndex);
+
+      if (newRows.length === 0) {
+        handleClearFile();
+        toast.info('All rows removed', { description: 'Upload a new file to continue.' });
+        return;
+      }
+
+      revalidate(newRows);
+      toast.success('Row deleted', {
+        description: `${row?.name || 'Row'} removed from preview.`,
+      });
+    },
+    [parsedRows, revalidate]
+  );
+
+  // ========== DB & PROCESSING HANDLERS ==========
 
   const handleSaveToDatabase = async () => {
     if (!validationResult) return;
 
     const validRows = validationResult.validRows;
     if (validRows.length === 0) {
-      toast.error('No valid rows to save');
+      toast.error('No valid rows to save', {
+        description: 'Fix the errors above before saving.',
+      });
       return;
     }
 
@@ -123,10 +218,10 @@ export default function UploadPage() {
         });
       } else {
         toast.error('Failed to save data', {
-          description: data.error,
+          description: data.error || 'Database error.',
         });
       }
-    } catch (error) {
+    } catch {
       toast.error('Network error', {
         description: 'Failed to connect to the server.',
       });
@@ -156,7 +251,6 @@ export default function UploadPage() {
       const data = await res.json();
 
       if (data.success && data.data.pdfs.length > 0) {
-        // Download each PDF
         for (const pdf of data.data.pdfs) {
           const link = document.createElement('a');
           link.href = `data:application/pdf;base64,${pdf.pdf}`;
@@ -173,7 +267,7 @@ export default function UploadPage() {
         });
         console.error('PDF Generate response:', data);
       }
-    } catch (error) {
+    } catch {
       toast.error('Generation failed', {
         description: 'Failed to generate salary slips.',
       });
@@ -210,11 +304,11 @@ export default function UploadPage() {
               : 'All salary slips delivered.',
         });
       } else {
-        toast.error('Email sending failed', {
-          description: data.error,
+        toast.error('Email delivery failed', {
+          description: data.error || 'SMTP connection error.',
         });
       }
-    } catch (error) {
+    } catch {
       toast.error('Network error', {
         description: 'Failed to send emails.',
       });
@@ -258,7 +352,7 @@ export default function UploadPage() {
           description: data.error || 'Failed to generate ZIP file.',
         });
       }
-    } catch (error) {
+    } catch {
       toast.error('Download failed', {
         description: 'Network error while downloading.',
       });
@@ -266,6 +360,9 @@ export default function UploadPage() {
       setIsDownloading(false);
     }
   };
+
+  // Any action in progress?
+  const isAnyActionRunning = isSaving || isGenerating || isSending || isDownloading;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -338,8 +435,32 @@ export default function UploadPage() {
       {/* Validation Summary */}
       {validationResult && <ValidationSummary result={validationResult} />}
 
-      {/* Preview Table */}
-      {parsedRows.length > 0 && <PreviewTable rows={parsedRows} />}
+      {/* Preview Table (Lazy Loaded) */}
+      {parsedRows.length > 0 && (
+        <Suspense fallback={<TableSkeleton rows={5} />}>
+          <PreviewTable
+            rows={parsedRows}
+            onEdit={!savedToDb ? handleEditRow : undefined}
+            onDelete={!savedToDb ? handleDeleteRow : undefined}
+            editedRows={editedRows}
+          />
+        </Suspense>
+      )}
+
+      {/* Edit Row Modal (Lazy Loaded) */}
+      {editModalOpen && (
+        <Suspense fallback={null}>
+          <EditRowModal
+            row={editingRow}
+            open={editModalOpen}
+            onClose={() => {
+              setEditModalOpen(false);
+              setEditingRow(null);
+            }}
+            onSave={handleSaveEdit}
+          />
+        </Suspense>
+      )}
 
       {/* Action Buttons */}
       {parsedRows.length > 0 && (
@@ -357,13 +478,13 @@ export default function UploadPage() {
               ) : (
                 <Save className="h-4 w-4" />
               )}
-              {isSaving ? 'Saving...' : 'Save to Database'}
+              {isSaving ? 'Saving...' : `Save to Database (${validationResult?.validCount || 0} rows)`}
             </Button>
           ) : (
             <>
               <Button
                 onClick={handleGeneratePdfs}
-                disabled={isGenerating}
+                disabled={isAnyActionRunning}
                 variant="outline"
                 className="gap-2"
               >
@@ -377,7 +498,7 @@ export default function UploadPage() {
 
               <Button
                 onClick={handleSendEmails}
-                disabled={isSending}
+                disabled={isAnyActionRunning}
                 className="gap-2"
               >
                 {isSending ? (
@@ -390,7 +511,7 @@ export default function UploadPage() {
 
               <Button
                 onClick={handleDownloadAll}
-                disabled={isDownloading}
+                disabled={isAnyActionRunning}
                 variant="outline"
                 className="gap-2"
               >

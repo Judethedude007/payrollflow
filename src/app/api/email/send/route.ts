@@ -3,7 +3,10 @@ import { supabase } from '@/lib/supabase';
 import { generateSalarySlipPdf } from '@/lib/pdf';
 import { sendSalarySlipEmail } from '@/lib/email';
 import { getMonthName } from '@/utils/salary';
+import { sanitizeString } from '@/utils/sanitize';
 import type { Employee, SalaryRecord } from '@/types';
+
+const MAX_EMAILS_PER_REQUEST = 50;
 
 export async function POST(request: Request) {
   try {
@@ -19,6 +22,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields' },
         { status: 400 }
+      );
+    }
+
+    // Rate limit: max 50 emails per request
+    if (employeeIds.length > MAX_EMAILS_PER_REQUEST) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Too many recipients. Maximum ${MAX_EMAILS_PER_REQUEST} emails per request.`,
+        },
+        { status: 429 }
       );
     }
 
@@ -75,7 +89,7 @@ export async function POST(request: Request) {
         console.log(`[Email Send] Sending to ${employee.email}...`);
         const emailResult = await sendSalarySlipEmail({
           to: employee.email,
-          employeeName: employee.name,
+          employeeName: sanitizeString(employee.name),
           month: monthName,
           year,
           pdfBuffer: pdfBytes,

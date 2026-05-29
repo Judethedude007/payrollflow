@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -110,12 +110,18 @@ export default function RecordsPage() {
     }
   };
 
-  const filteredRecords = records.filter(
-    (r) =>
-      r.employee_id.toLowerCase().includes(search.toLowerCase()) ||
-      r.employees?.name?.toLowerCase().includes(search.toLowerCase()) ||
-      getMonthName(r.month).toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredRecords = useMemo(() => {
+    if (!search) return records;
+    const q = search.toLowerCase();
+    return records.filter(
+      (r) =>
+        r.employee_id.toLowerCase().includes(q) ||
+        r.employees?.name?.toLowerCase().includes(q) ||
+        r.employees?.email?.toLowerCase().includes(q) ||
+        r.employees?.department?.toLowerCase().includes(q) ||
+        getMonthName(r.month).toLowerCase().includes(q)
+    );
+  }, [records, search]);
 
   if (isLoading) return <TableSkeleton rows={8} />;
 
