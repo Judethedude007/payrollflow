@@ -26,6 +26,8 @@ export default function LoginPage() {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
+      // Set cookie for middleware protection
+      document.cookie = 'payrollflow_auth=authenticated; path=/; max-age=86400; SameSite=Lax';
       localStorage.setItem('payrollflow_auth', 'true');
       toast.success('Welcome back, Admin!', {
         description: 'Redirecting to dashboard...',

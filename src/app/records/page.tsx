@@ -162,10 +162,10 @@ export default function RecordsPage() {
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <TableHead className="font-semibold">Employee</TableHead>
-                <TableHead className="font-semibold">Department</TableHead>
+                <TableHead className="font-semibold hidden md:table-cell">Department</TableHead>
                 <TableHead className="font-semibold">Period</TableHead>
-                <TableHead className="text-right font-semibold">Gross</TableHead>
-                <TableHead className="text-right font-semibold">Deductions</TableHead>
+                <TableHead className="text-right font-semibold hidden md:table-cell">Gross</TableHead>
+                <TableHead className="text-right font-semibold hidden md:table-cell">Deductions</TableHead>
                 <TableHead className="text-right font-semibold">Net Salary</TableHead>
                 <TableHead className="text-center font-semibold">Actions</TableHead>
               </TableRow>
@@ -183,7 +183,7 @@ export default function RecordsPage() {
                       </p>
                     </div>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
+                  <TableCell className="text-sm text-muted-foreground hidden md:table-cell">
                     {record.employees?.department || '—'}
                   </TableCell>
                   <TableCell>
@@ -191,12 +191,12 @@ export default function RecordsPage() {
                       {getMonthName(record.month)} {record.year}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right font-mono text-sm">
+                  <TableCell className="text-right font-mono text-sm hidden md:table-cell">
                     {formatCurrency(
                       record.base_salary + record.hra + record.allowances
                     )}
                   </TableCell>
-                  <TableCell className="text-right font-mono text-sm text-red-500">
+                  <TableCell className="text-right font-mono text-sm text-red-500 hidden md:table-cell">
                     {record.deductions > 0
                       ? `-${formatCurrency(record.deductions)}`
                       : '—'}

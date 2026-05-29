@@ -305,10 +305,10 @@ export default function EmailsPage() {
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <TableHead className="font-semibold">Employee</TableHead>
-                <TableHead className="font-semibold">Email</TableHead>
+                <TableHead className="font-semibold hidden md:table-cell">Email</TableHead>
                 <TableHead className="font-semibold">Status</TableHead>
-                <TableHead className="font-semibold">Error</TableHead>
-                <TableHead className="font-semibold">Sent At</TableHead>
+                <TableHead className="font-semibold hidden md:table-cell">Error</TableHead>
+                <TableHead className="font-semibold hidden md:table-cell">Sent At</TableHead>
                 <TableHead className="text-center font-semibold">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -329,7 +329,7 @@ export default function EmailsPage() {
                         </p>
                       </div>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className="text-sm text-muted-foreground hidden md:table-cell">
                       {log.employees?.email || '—'}
                     </TableCell>
                     <TableCell>
@@ -341,7 +341,7 @@ export default function EmailsPage() {
                         {config.label}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground max-w-[200px]">
+                    <TableCell className="text-sm text-muted-foreground max-w-[200px] hidden md:table-cell">
                       {log.error_message ? (
                         <span className="text-red-500 text-xs break-words">
                           {log.error_message}
@@ -350,7 +350,7 @@ export default function EmailsPage() {
                         '—'
                       )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap hidden md:table-cell">
                       {log.sent_at
                         ? new Date(log.sent_at).toLocaleString('en-IN', {
                             dateStyle: 'medium',

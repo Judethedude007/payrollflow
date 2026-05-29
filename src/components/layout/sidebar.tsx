@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Zap,
+  LogOut,
 } from 'lucide-react';
 
 const navigation = [
@@ -29,6 +30,17 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle, onNavigate }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = () => {
+    // Clear cookie
+    document.cookie = 'payrollflow_auth=; path=/; max-age=0';
+    // Clear localStorage
+    localStorage.removeItem('payrollflow_auth');
+    // Redirect to login
+    router.push('/login');
+    onNavigate?.();
+  };
 
   return (
     <aside
@@ -85,8 +97,16 @@ export function Sidebar({ collapsed, onToggle, onNavigate }: SidebarProps) {
         })}
       </nav>
 
-      {/* Collapse Toggle */}
-      <div className="border-t border-sidebar-border p-3">
+      {/* Footer: Logout + Collapse */}
+      <div className="border-t border-sidebar-border p-3 space-y-1">
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+          title={collapsed ? 'Logout' : undefined}
+        >
+          <LogOut className="h-4 w-4 shrink-0" />
+          {!collapsed && <span className="animate-fade-in">Logout</span>}
+        </button>
         <button
           onClick={onToggle}
           className="flex w-full items-center justify-center rounded-lg p-2 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
